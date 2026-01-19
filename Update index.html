@@ -1,1 +1,222 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1080, height=70, initial-scale=1" />
+<title>HANAZONO Updates Ticker</title>
 
+<style>
+:root{
+  --band-bg:#000;
+  --text-color:#fff;
+  --label-bg:#c40000;
+  --label-color:#fff;
+
+  --label-font:13px;
+  --text-font:17px;
+
+  --label-pad-x:12px;
+  --label-row-gap:4px;
+
+  --after-label-gap:12px;
+  --en-ja-gap:6px;
+
+  --speed-pps:102;
+  --gap-px:80;
+  --min-cycle-px:900;
+}
+
+*{box-sizing:border-box}
+
+html,body{
+  width:1920px;
+  height:130px;
+  margin:0;
+  overflow:hidden;
+}
+
+.band{
+  width:1080px;
+  height:70px;
+  display:flex;
+  align-items:center;
+  background:var(--band-bg);
+  color:var(--text-color);
+  font-family:system-ui,"Noto Sans JP",sans-serif;
+}
+
+.label{
+  height:70px;
+  background:var(--label-bg);
+  color:var(--label-color);
+  font-weight:900;
+  padding:0 var(--label-pad-x);
+  display:grid;
+  grid-template-rows:auto auto;
+  align-content:center;
+  row-gap:var(--label-row-gap);
+  flex-shrink:0;
+}
+
+.label span{
+  font-size:var(--label-font);
+  line-height:1.2;
+}
+
+.textBlock{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  width:100%;
+  overflow:hidden;
+  margin-left:var(--after-label-gap);
+  gap:var(--en-ja-gap);
+}
+
+.line{overflow:hidden}
+
+.track{
+  display:inline-flex;
+  white-space:nowrap;
+  will-change:transform;
+}
+
+.text{
+  font-size:var(--text-font);
+  font-weight:700;
+  line-height:1.1;
+}
+
+.item{padding-right:2ch}
+
+.separator::after{content:" • ";opacity:.6}
+
+/* ★ <br> replacement */
+.br-spacer{
+  display:inline-block;
+  width:20px;
+  height:1px;
+  flex:0 0 auto;
+}
+
+/* blank spacer between cycles */
+.spacer{
+  display:inline-block;
+  width:0;
+}
+</style>
+</head>
+
+<body>
+<div class="band">
+  <div class="label">
+    <span>UPDATES</span>
+    <span>最新情報</span>
+  </div>
+  <div class="textBlock">
+    <div class="line"><div class="track text" id="enTrack"></div></div>
+    <div class="line"><div class="track text" id="jaTrack"></div></div>
+  </div>
+</div>
+
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+const enTrack=$("#enTrack");
+const jaTrack=$("#jaTrack");
+
+const API="https://web-api.yukiyama.biz/web-api/news/backward";
+const facility=379;
+const UPDATE_INTERVAL=60000;
+const speed=102;
+const gapPx=80;
+const minCycle=900;
+
+let x=0,lastT=performance.now()/1000,cycleLen=minCycle;
+
+/* ===== text normalize ===== */
+function normalizeText(str){
+  return str
+    .replace(/<br\s*\/?>/gi,'<span class="br-spacer"></span>')
+    .replace(/\r?\n/g,'<span class="br-spacer"></span>')
+    .trim();
+}
+
+function compose(items){
+  return items.map(v=>{
+    const t = (v.title || "").trim();
+    const m = (v.message || "").trim();
+
+    // ★ 区切りは em dash ではなく半角スペース
+    const combined = t && m ? `${t} ${m}` : (t || m);
+
+    return normalizeText(combined);
+  }).filter(Boolean);
+}
+
+function buildSet(parts){
+  const f=document.createDocumentFragment();
+  parts.forEach((p,i)=>{
+    const s=document.createElement("span");
+    s.className="item"+(i<parts.length-1?" separator":"");
+    s.innerHTML=p;   // ★ HTMLとして描画
+    f.appendChild(s);
+  });
+  return f;
+}
+
+function render(track,parts){
+  track.innerHTML="";
+  const set1=document.createElement("span");
+  set1.style.display="inline-flex";
+  set1.appendChild(buildSet(parts));
+
+  const spacer=document.createElement("span");
+  spacer.className="spacer";
+
+  const set2=document.createElement("span");
+  set2.style.display="inline-flex";
+  set2.appendChild(buildSet(parts));
+
+  track.append(set1,spacer,set2);
+  return{set1,spacer};
+}
+
+function tick(){
+  const now=performance.now()/1000;
+  const dt=now-lastT; lastT=now;
+  x-=speed*dt;
+  while(x<=-cycleLen)x+=cycleLen;
+  const tx=`translate3d(${x}px,0,0)`;
+  enTrack.style.transform=tx;
+  jaTrack.style.transform=tx;
+  requestAnimationFrame(tick);
+}
+
+async function refresh(){
+  const res=await fetch(`${API}?skiareaId=${facility}&limit=10&lang=en`).then(r=>r.json()).catch(()=>[]);
+  const resJ=await fetch(`${API}?skiareaId=${facility}&limit=10&lang=ja`).then(r=>r.json()).catch(()=>[]);
+  const enParts=compose(Object.values(res));
+  const jaParts=compose(Object.values(resJ));
+
+  const enMeta=render(enTrack,enParts.length?enParts:["No updates available"]);
+  const jaMeta=render(jaTrack,jaParts.length?jaParts:["現在、お知らせはありません。"]);
+
+  requestAnimationFrame(()=>{
+    const enW=enMeta.set1.getBoundingClientRect().width;
+    const jaW=jaMeta.set1.getBoundingClientRect().width;
+    const viewW=enTrack.parentElement.getBoundingClientRect().width;
+    const baseW=Math.max(enW,jaW);
+    cycleLen=Math.max(baseW+gapPx+viewW,minCycle);
+    enMeta.spacer.style.width=(baseW-enW+gapPx+viewW)+"px";
+    jaMeta.spacer.style.width=(baseW-jaW+gapPx+viewW)+"px";
+  });
+}
+
+refresh();
+tick();
+setInterval(refresh,UPDATE_INTERVAL);
+})();
+</script>
+</body>
+</html>
